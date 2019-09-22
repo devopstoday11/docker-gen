@@ -69,3 +69,10 @@ func removeBlankLines(reader io.Reader, writer io.Writer) {
 
 	bwriter.Flush()
 }
+
+func shortIdent(full string) string {
+	if len(full) < 12 {
+		return full
+	}
+	return full[:12]
+}
