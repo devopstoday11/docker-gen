@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/fsouza/go-dockerclient"
+	docker "github.com/fsouza/go-dockerclient"
 )
 
 var (
@@ -92,6 +92,7 @@ type RuntimeContainer struct {
 	Env          map[string]string
 	Volumes      map[string]Volume
 	Node         SwarmNode
+	Service      SwarmService
 	Labels       map[string]string
 	IP           string
 	IP6LinkLocal string
@@ -135,6 +136,19 @@ type SwarmNode struct {
 	ID      string
 	Name    string
 	Address Address
+}
+
+type SwarmServiceNetwork struct {
+	IP     string
+	Name   string
+	Scope  string
+	Driver string
+}
+
+type SwarmService struct {
+	ID       string
+	Name     string
+	Networks []SwarmServiceNetwork
 }
 
 type Mount struct {
