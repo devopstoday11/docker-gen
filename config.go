@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fsouza/go-dockerclient"
+	docker "github.com/fsouza/go-dockerclient"
 )
 
 type Config struct {

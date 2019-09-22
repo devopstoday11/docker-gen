@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fsouza/go-dockerclient"
+	docker "github.com/fsouza/go-dockerclient"
 )
 
 type generator struct {
@@ -365,6 +365,8 @@ func (g *generator) getContainers() ([]*RuntimeContainer, error) {
 			continue
 		}
 
+		labels := container.Config.Labels
+
 		registry, repository, tag := splitDockerImage(container.Config.Image)
 		runtimeContainer := &RuntimeContainer{
 			ID: container.ID,
@@ -428,11 +430,62 @@ func (g *generator) getContainers() ([]*RuntimeContainer, error) {
 				ReadWrite: container.VolumesRW[k],
 			}
 		}
+
+		// Swarm node
 		if container.Node != nil {
 			runtimeContainer.Node.ID = container.Node.ID
 			runtimeContainer.Node.Name = container.Node.Name
 			runtimeContainer.Node.Address = Address{
 				IP: container.Node.IP,
+			}
+		} else {
+			if nodeID, ok := labels["com.docker.swarm.node.id"]; ok {
+				node, err := g.Client.InspectNode(nodeID)
+				if err != nil {
+					log.Printf("Error inspecting swarm node %s: %s\n", nodeID, err)
+				} else {
+					runtimeContainer.Node = SwarmNode{
+						ID:   node.ID,
+						Name: node.Spec.Name,
+						Address: Address{
+							IP: node.Status.Addr,
+						},
+					}
+				}
+			}
+		}
+
+		// Swarm service
+		if serviceID, ok := labels["com.docker.swarm.service.id"]; ok {
+			svc, err := g.Client.InspectService(serviceID)
+			if err != nil {
+				log.Printf("Error inspecting swarm service %s: %s\n", serviceID, err)
+			} else {
+				runtimeContainer.Service = SwarmService{
+					ID:   svc.ID,
+					Name: svc.Spec.Name,
+				}
+
+				// alternative attempt to get service name
+				if len(runtimeContainer.Service.Name) == 0 {
+					runtimeContainer.Service.Name = labels["com.docker.swarm.service.name"]
+				}
+
+				for _, vip := range svc.Endpoint.VirtualIPs {
+					network, err := g.Client.NetworkInfo(vip.NetworkID)
+					if err != nil {
+						log.Printf("Error inspecting swarm service VIP network %s: %s\n", vip.NetworkID, err)
+					} else {
+						cleanVIP := strings.Split(vip.Addr, "/")[0]
+						svcVIPNet := SwarmServiceNetwork{
+							IP:     cleanVIP,
+							Name:   network.Name,
+							Scope:  network.Scope,
+							Driver: network.Driver,
+						}
+						runtimeContainer.Service.Networks = append(runtimeContainer.Service.Networks, svcVIPNet)
+					}
+				}
 			}
 		}
 
