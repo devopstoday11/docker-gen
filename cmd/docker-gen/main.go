@@ -18,6 +18,7 @@ type stringslice []string
 var (
 	buildVersion            string
 	version                 bool
+	printCtx                bool
 	watch                   bool
 	wait                    string
 	notifyCmd               string
@@ -87,6 +88,7 @@ func initFlags() {
 		certPath = filepath.Join(os.Getenv("HOME"), ".docker")
 	}
 	flag.BoolVar(&version, "version", false, "show version")
+	flag.BoolVar(&printCtx, "print-context", false, "only print the generated template context")
 	flag.BoolVar(&watch, "watch", false, "watch for container changes")
 	flag.StringVar(&wait, "wait", "", "minimum and maximum durations to wait (e.g. \"500ms:2s\") before triggering generate")
 	flag.BoolVar(&onlyExposed, "only-exposed", false, "only include containers with exposed ports")
@@ -129,13 +131,13 @@ func main() {
 		for _, configFile := range configFiles {
 			err := loadConfig(configFile)
 			if err != nil {
-				log.Fatalf("Error loading config %s: %s\n", configFile, err)
+				log.Fatalf("Error loading config %s: %v\n", configFile, err)
 			}
 		}
 	} else {
 		w, err := dockergen.ParseWait(wait)
 		if err != nil {
-			log.Fatalf("Error parsing wait interval: %s\n", err)
+			log.Fatalf("Error parsing wait interval: %v\n", err)
 		}
 		config := dockergen.Config{
 			Template:         flag.Arg(0),
@@ -183,7 +185,18 @@ func main() {
 		log.Fatalf("Error creating generator: %v", err)
 	}
 
-	if err := generator.Generate(); err != nil {
-		log.Fatalf("Error running generate: %v", err)
+	if printCtx {
+		// only print the context
+		ctx, err := generator.GenerateContext()
+		if err != nil {
+			log.Fatalf("Error generating content: %v", err)
+		} else {
+			fmt.Printf("%s\n", ctx.String())
+		}
+	} else {
+		// run the generator
+		if err := generator.Generate(); err != nil {
+			log.Fatalf("Error running generate: %v", err)
+		}
 	}
 }

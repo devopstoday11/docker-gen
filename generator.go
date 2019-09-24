@@ -26,6 +26,7 @@ type generator struct {
 	retry bool
 }
 
+// GeneratorConfig holds the configuration of the generator
 type GeneratorConfig struct {
 	Endpoint string
 
@@ -38,6 +39,7 @@ type GeneratorConfig struct {
 	ConfigFile ConfigFile
 }
 
+// NewGenerator creates a new generator instance
 func NewGenerator(gc GeneratorConfig) (*generator, error) {
 	endpoint, err := GetEndpoint(gc.Endpoint)
 	if err != nil {
@@ -55,7 +57,7 @@ func NewGenerator(gc GeneratorConfig) (*generator, error) {
 	}
 
 	// Grab the docker daemon info once and hold onto it
-	SetDockerEnv(apiVersion)
+	setDockerEnv(apiVersion)
 
 	return &generator{
 		Client:    client,
@@ -113,21 +115,30 @@ func (g *generator) generateFromSignals() {
 	}()
 }
 
+// generateAndNotify generates file and calls notifiers
+// if forceNotify is true, notifiers will be called even if the generated file was not changed
+func (g *generator) generateAndNotify(config Config, containers Context, forceNotify bool) {
+	changed := GenerateFile(config, containers)
+	if !changed && !forceNotify {
+		log.Printf("Contents of %s did not change. Skipping notifications.", config.Dest)
+		return
+	} else if !changed {
+		log.Printf("Contents of %s did not change, calling notifiers anyway.", config.Dest)
+	}
+
+	g.runNotifyCmd(config)
+	g.sendSignalToContainer(config)
+	g.sendSignalToService(config)
+}
+
 func (g *generator) generateFromContainers() {
-	containers, err := g.getContainers()
+	containers, err := g.GenerateContext()
 	if err != nil {
 		log.Printf("Error listing containers: %s\n", err)
 		return
 	}
 	for _, config := range g.Configs.Config {
-		changed := GenerateFile(config, containers)
-		if !changed {
-			log.Printf("Contents of %s did not change. Skipping notification '%s'", config.Dest, config.NotifyCmd)
-			continue
-		}
-		g.runNotifyCmd(config)
-		g.sendSignalToContainer(config)
-		g.sendSignalToService(config)
+		g.generateAndNotify(config, containers, false)
 	}
 }
 
@@ -148,16 +159,12 @@ func (g *generator) generateAtInterval() {
 			for {
 				select {
 				case <-ticker.C:
-					containers, err := g.getContainers()
+					containers, err := g.GenerateContext()
 					if err != nil {
 						log.Printf("Error listing containers: %s\n", err)
 						continue
 					}
-					// ignore changed return value. always run notify command
-					GenerateFile(config, containers)
-					g.runNotifyCmd(config)
-					g.sendSignalToContainer(config)
-					g.sendSignalToService(config)
+					g.generateAndNotify(config, containers, true)
 				case sig := <-sigChan:
 					log.Printf("Received signal: %s\n", sig)
 					switch sig {
@@ -193,20 +200,13 @@ func (g *generator) generateFromEvents() {
 			watchers = append(watchers, watcher)
 
 			debouncedChan := newDebounceChannel(watcher, config.Wait)
-			for _ = range debouncedChan {
-				containers, err := g.getContainers()
+			for range debouncedChan {
+				containers, err := g.GenerateContext()
 				if err != nil {
 					log.Printf("Error listing containers: %s\n", err)
 					continue
 				}
-				changed := GenerateFile(config, containers)
-				if !changed {
-					log.Printf("Contents of %s did not change. Skipping notification '%s'", config.Dest, config.NotifyCmd)
-					continue
-				}
-				g.runNotifyCmd(config)
-				g.sendSignalToContainer(config)
-				g.sendSignalToService(config)
+				g.generateAndNotify(config, containers, false)
 			}
 		}(config, make(chan *docker.APIEvents, 100))
 	}
@@ -275,6 +275,12 @@ func (g *generator) generateFromEvents() {
 					}
 					if event.Status == "start" || event.Status == "stop" || event.Status == "die" {
 						log.Printf("Received event %s for container %s", event.Status, shortIdent(event.ID))
+						// fanout event to all watchers
+						for _, watcher := range watchers {
+							watcher <- event
+						}
+					} else if event.Status == "service:update" {
+						log.Printf("Received event %s for service %s", event.Status, shortIdent(event.ID))
 						// fanout event to all watchers
 						for _, watcher := range watchers {
 							watcher <- event
@@ -379,14 +385,74 @@ func (g *generator) sendSignalToService(config Config) {
 	}
 }
 
-func (g *generator) getContainers() ([]*RuntimeContainer, error) {
+func (g *generator) refreshServerInfo() {
 	apiInfo, err := g.Client.Info()
 	if err != nil {
 		log.Printf("Error retrieving docker server info: %s\n", err)
 	} else {
-		SetServerInfo(apiInfo)
+		setServerInfo(apiInfo)
+	}
+}
+
+func (g *generator) getServices() (Services, error) {
+	var err error
+	svcmap := make(Services)
+
+	g.refreshServerInfo()
+
+	svcs, err := g.Client.ListServices(docker.ListServicesOptions{})
+	if err != nil {
+		return nil, err
 	}
 
+	for _, svc := range svcs {
+		s := &Service{
+			ID:     svc.ID,
+			Name:   svc.Spec.Name,
+			Labels: svc.Spec.Labels,
+		}
+
+		for _, vip := range svc.Endpoint.VirtualIPs {
+			network, err := g.Client.NetworkInfo(vip.NetworkID)
+			if err != nil {
+				return nil, fmt.Errorf("error inspecting swarm service VIP network %s: %s", vip.NetworkID, err)
+			}
+
+			cleanVIP := strings.Split(vip.Addr, "/")[0]
+			svcVIPNet := ServiceNetwork{
+				IP:     cleanVIP,
+				Name:   network.Name,
+				Scope:  network.Scope,
+				Driver: network.Driver,
+			}
+			s.Networks = append(s.Networks, svcVIPNet)
+		}
+
+		svcmap[svc.ID] = s
+	}
+
+	return svcmap, err
+}
+
+// GenerateContext generates the context used for template generation
+func (g *generator) GenerateContext() (Context, error) {
+	// client info
+	apiInfo, err := g.Client.Info()
+	if err != nil {
+		log.Printf("Error retrieving Docker server info: %s\n", err)
+	} else {
+		setServerInfo(apiInfo)
+	}
+
+	// swarm services
+	svcs, err := g.getServices()
+	if err != nil {
+		log.Printf("Error retrieving Docker services: %s\n", err)
+	} else {
+		setServices(svcs)
+	}
+
+	// containers
 	apiContainers, err := g.Client.ListContainers(docker.ListContainersOptions{
 		All:  g.All,
 		Size: false,
@@ -423,7 +489,7 @@ func (g *generator) getContainers() ([]*RuntimeContainer, error) {
 			Networks:     []Network{},
 			Env:          make(map[string]string),
 			Volumes:      make(map[string]Volume),
-			Node:         SwarmNode{},
+			Node:         Node{},
 			Labels:       make(map[string]string),
 			IP:           container.NetworkSettings.IPAddress,
 			IP6LinkLocal: container.NetworkSettings.LinkLocalIPv6Address,
@@ -480,9 +546,9 @@ func (g *generator) getContainers() ([]*RuntimeContainer, error) {
 			if nodeID, ok := labels["com.docker.swarm.node.id"]; ok {
 				node, err := g.Client.InspectNode(nodeID)
 				if err != nil {
-					log.Printf("Error inspecting swarm node %s: %s\n", nodeID, err)
+					log.Printf("Error inspecting swarm node %s: %s\n", shortIdent(nodeID), err)
 				} else {
-					runtimeContainer.Node = SwarmNode{
+					runtimeContainer.Node = Node{
 						ID:   node.ID,
 						Name: node.Spec.Name,
 						Address: Address{
@@ -495,35 +561,12 @@ func (g *generator) getContainers() ([]*RuntimeContainer, error) {
 
 		// Swarm service
 		if serviceID, ok := labels["com.docker.swarm.service.id"]; ok {
-			svc, err := g.Client.InspectService(serviceID)
-			if err != nil {
-				log.Printf("Error inspecting swarm service %s: %s\n", serviceID, err)
+			svc, has := svcs[serviceID]
+			if !has {
+				log.Printf("Container %s is belonging to a non-existent service %s\n",
+					shortIdent(container.ID), shortIdent(serviceID))
 			} else {
-				runtimeContainer.Service = SwarmService{
-					ID:   svc.ID,
-					Name: svc.Spec.Name,
-				}
-
-				// alternative attempt to get service name
-				if len(runtimeContainer.Service.Name) == 0 {
-					runtimeContainer.Service.Name = labels["com.docker.swarm.service.name"]
-				}
-
-				for _, vip := range svc.Endpoint.VirtualIPs {
-					network, err := g.Client.NetworkInfo(vip.NetworkID)
-					if err != nil {
-						log.Printf("Error inspecting swarm service VIP network %s: %s\n", vip.NetworkID, err)
-					} else {
-						cleanVIP := strings.Split(vip.Addr, "/")[0]
-						svcVIPNet := SwarmServiceNetwork{
-							IP:     cleanVIP,
-							Name:   network.Name,
-							Scope:  network.Scope,
-							Driver: network.Driver,
-						}
-						runtimeContainer.Service.Networks = append(runtimeContainer.Service.Networks, svcVIPNet)
-					}
-				}
+				runtimeContainer.Service = svc
 			}
 		}
 

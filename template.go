@@ -182,23 +182,21 @@ func whereAny(entries interface{}, key, sep string, cmp []string) (interface{}, 
 	return generalizedWhere("whereAny", entries, key, func(value interface{}) bool {
 		if value == nil {
 			return false
-		} else {
-			items := strings.Split(value.(string), sep)
-			return len(intersect(cmp, items)) > 0
 		}
+		items := strings.Split(value.(string), sep)
+		return len(intersect(cmp, items)) > 0
 	})
 }
 
 // selects entries based on key.  Assumes key is delimited and breaks it apart before comparing
 func whereAll(entries interface{}, key, sep string, cmp []string) (interface{}, error) {
-	req_count := len(cmp)
+	reqCount := len(cmp)
 	return generalizedWhere("whereAll", entries, key, func(value interface{}) bool {
 		if value == nil {
 			return false
-		} else {
-			items := strings.Split(value.(string), sep)
-			return len(intersect(cmp, items)) == req_count
 		}
+		items := strings.Split(value.(string), sep)
+		return len(intersect(cmp, items)) == reqCount
 	})
 }
 
@@ -413,9 +411,9 @@ func trim(s string) string {
 func when(condition bool, trueValue, falseValue interface{}) interface{} {
 	if condition {
 		return trueValue
-	} else {
-		return falseValue
 	}
+
+	return falseValue
 }
 
 func newTemplate(name string) *template.Template {
@@ -464,17 +462,18 @@ func newTemplate(name string) *template.Template {
 func filterRunning(config Config, containers Context) Context {
 	if config.IncludeStopped {
 		return containers
-	} else {
-		filteredContainers := Context{}
-		for _, container := range containers {
-			if container.State.Running {
-				filteredContainers = append(filteredContainers, container)
-			}
-		}
-		return filteredContainers
 	}
+
+	filteredContainers := Context{}
+	for _, container := range containers {
+		if container.State.Running {
+			filteredContainers = append(filteredContainers, container)
+		}
+	}
+	return filteredContainers
 }
 
+// GenerateFile generates the file configured in config from the specified context
 func GenerateFile(config Config, containers Context) bool {
 	filteredRunningContainers := filterRunning(config, containers)
 	filteredContainers := Context{}
@@ -539,9 +538,9 @@ func GenerateFile(config Config, containers Context) bool {
 			return true
 		}
 		return false
-	} else {
-		os.Stdout.Write(contents)
 	}
+
+	os.Stdout.Write(contents)
 	return true
 }
 

@@ -8,6 +8,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 )
 
+// Config represents the schema of a single config element
 type Config struct {
 	Template         string
 	Dest             string
@@ -24,10 +25,12 @@ type Config struct {
 	KeepBlankLines   bool
 }
 
+// ConfigFile represents the schema of the config file
 type ConfigFile struct {
 	Config []Config
 }
 
+// FilterWatches returns only configs with watchers
 func (c *ConfigFile) FilterWatches() ConfigFile {
 	configWithWatches := []Config{}
 
@@ -41,11 +44,13 @@ func (c *ConfigFile) FilterWatches() ConfigFile {
 	}
 }
 
+// Wait duration specification
 type Wait struct {
 	Min time.Duration
 	Max time.Duration
 }
 
+// UnmarshalText unmarhals the object from bytes
 func (w *Wait) UnmarshalText(text []byte) error {
 	wait, err := ParseWait(string(text))
 	if err == nil {
@@ -54,6 +59,7 @@ func (w *Wait) UnmarshalText(text []byte) error {
 	return err
 }
 
+// ParseWait parses the wait duration
 func ParseWait(s string) (*Wait, error) {
 	if len(strings.TrimSpace(s)) < 1 {
 		return &Wait{0, 0}, nil

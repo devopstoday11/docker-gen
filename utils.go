@@ -8,6 +8,7 @@ import (
 	"unicode"
 )
 
+// GetEndpoint returns the requested way to contact the Docker daemon
 func GetEndpoint(endpoint string) (string, error) {
 	defaultEndpoint := "unix:///var/run/docker.sock"
 	if os.Getenv("DOCKER_HOST") != "" {

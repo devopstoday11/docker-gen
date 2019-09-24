@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsouza/go-dockerclient"
+	docker "github.com/fsouza/go-dockerclient"
 	dockertest "github.com/fsouza/go-dockerclient/testing"
 )
 
@@ -104,7 +104,7 @@ func TestGenerateFromEvents(t *testing.T) {
 	serverURL := fmt.Sprintf("tcp://%s", strings.TrimRight(strings.TrimPrefix(server.URL(), "http://"), "/"))
 	client, err := NewDockerClient(serverURL, false, "", "", "")
 	if err != nil {
-		t.Errorf("Failed to create client: %s", err)
+		t.Errorf("Failed to create client: %v", err)
 	}
 	client.SkipServerVersionCheck = true
 
@@ -140,7 +140,7 @@ func TestGenerateFromEvents(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to retrieve docker server version info: %v\n", err)
 	}
-	SetDockerEnv(apiVersion) // prevents a panic
+	setDockerEnv(apiVersion) // prevents a panic
 
 	generator := &generator{
 		Client:   client,

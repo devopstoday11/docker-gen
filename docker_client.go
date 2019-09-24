@@ -10,6 +10,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 )
 
+// NewDockerClient creates a new docker client configured to connect to the endpoint
 func NewDockerClient(endpoint string, tlsVerify bool, tlsCert, tlsCaCert, tlsKey string) (*docker.Client, error) {
 	if strings.HasPrefix(endpoint, "unix:") {
 		return docker.NewClient(endpoint)
@@ -32,9 +33,6 @@ func tlsEnabled(tlsCert, tlsCaCert, tlsKey string) bool {
 		}
 	}
 	return false
-}
-
-type DockerContainer struct {
 }
 
 // based off of https://github.com/dotcloud/docker/blob/2a711d16e05b69328f2636f88f8eac035477f7e4/utils/utils.go

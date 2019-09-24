@@ -2,6 +2,7 @@ package dockergen
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"regexp"
 	"sync"
@@ -13,23 +14,53 @@ var (
 	mu         sync.RWMutex
 	dockerInfo Docker
 	dockerEnv  *docker.Env
+	services   Services
 )
 
+// Context sent to template generation
 type Context []*RuntimeContainer
 
+// Services from Docker Swarm
+type Services map[string]*Service
+
+// Strings returns JSON human-readable representation of the context
+func (c *Context) String() string {
+	obj := map[string]interface{}{
+		".":         c,
+		".Env":      c.Env(),
+		".Docker":   c.Docker(),
+		".Services": c.Services(),
+	}
+
+	byts, _ := json.MarshalIndent(obj, "", "  ")
+	return string(byts)
+}
+
+// Env returns environmental variables of the generator
 func (c *Context) Env() map[string]string {
 	return splitKeyValueSlice(os.Environ())
 }
 
+// Docker returns info of the running Docker daemon
 func (c *Context) Docker() Docker {
 	mu.RLock()
 	defer mu.RUnlock()
+
 	return dockerInfo
 }
 
-func SetServerInfo(d *docker.DockerInfo) {
+// Services returns currently known Swarm services
+func (c *Context) Services() Services {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	return services
+}
+
+func setServerInfo(d *docker.DockerInfo) {
 	mu.Lock()
 	defer mu.Unlock()
+
 	dockerInfo = Docker{
 		Name:               d.Name,
 		NumContainers:      d.Containers,
@@ -43,12 +74,21 @@ func SetServerInfo(d *docker.DockerInfo) {
 	}
 }
 
-func SetDockerEnv(d *docker.Env) {
+func setDockerEnv(d *docker.Env) {
 	mu.Lock()
 	defer mu.Unlock()
+
 	dockerEnv = d
 }
 
+func setServices(s Services) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	services = s
+}
+
+// Address is IP address and port
 type Address struct {
 	IP           string
 	IP6LinkLocal string
@@ -59,6 +99,7 @@ type Address struct {
 	HostIP       string
 }
 
+// Network info
 type Network struct {
 	IP                  string
 	Name                string
@@ -71,16 +112,19 @@ type Network struct {
 	IPPrefixLen         int
 }
 
+// Volume info
 type Volume struct {
 	Path      string
 	HostPath  string
 	ReadWrite bool
 }
 
+// State holds container state
 type State struct {
 	Running bool
 }
 
+// RuntimeContainer holds info about a container
 type RuntimeContainer struct {
 	ID           string
 	Addresses    []Address
@@ -91,8 +135,8 @@ type RuntimeContainer struct {
 	Image        DockerImage
 	Env          map[string]string
 	Volumes      map[string]Volume
-	Node         SwarmNode
-	Service      SwarmService
+	Node         Node
+	Service      *Service
 	Labels       map[string]string
 	IP           string
 	IP6LinkLocal string
@@ -101,10 +145,12 @@ type RuntimeContainer struct {
 	State        State
 }
 
+// Equals returns true if the specified container represents the same container
 func (r *RuntimeContainer) Equals(o RuntimeContainer) bool {
 	return r.ID == o.ID && r.Image == o.Image
 }
 
+// PublishedAddresses returns the list of published addresses
 func (r *RuntimeContainer) PublishedAddresses() []Address {
 	mapped := []Address{}
 	for _, address := range r.Addresses {
@@ -115,6 +161,15 @@ func (r *RuntimeContainer) PublishedAddresses() []Address {
 	return mapped
 }
 
+// Service is a Docker Swarm service
+type Service struct {
+	ID       string
+	Name     string
+	Labels   map[string]string
+	Networks []ServiceNetwork
+}
+
+// DockerImage is a Docker image with repo and tag
 type DockerImage struct {
 	Registry   string
 	Repository string
@@ -132,25 +187,22 @@ func (i *DockerImage) String() string {
 	return ret
 }
 
-type SwarmNode struct {
+// Node is a Swarm node
+type Node struct {
 	ID      string
 	Name    string
 	Address Address
 }
 
-type SwarmServiceNetwork struct {
+// ServiceNetwork holds network info of a Swarm service
+type ServiceNetwork struct {
 	IP     string
 	Name   string
 	Scope  string
 	Driver string
 }
 
-type SwarmService struct {
-	ID       string
-	Name     string
-	Networks []SwarmServiceNetwork
-}
-
+// Mount info
 type Mount struct {
 	Name        string
 	Source      string
@@ -160,6 +212,7 @@ type Mount struct {
 	RW          bool
 }
 
+// Docker info
 type Docker struct {
 	Name               string
 	NumContainers      int
@@ -172,6 +225,8 @@ type Docker struct {
 	CurrentContainerID string
 }
 
+// GetCurrentContainerID returns the Docker container ID of the container
+//  the generator is running in or an empty string if it is not running in a container.
 func GetCurrentContainerID() string {
 	file, err := os.Open("/proc/self/cgroup")
 
