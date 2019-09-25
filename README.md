@@ -385,7 +385,9 @@ For example, this is a JSON version of an emitted RuntimeContainer struct:
 **Newly added**
 
 - *`setValue $dict $key $value`*: Sets value for a key in the dict, overwriting existing if any.
-- *`safeIdent $anyString`*: Makes a valid and safe identifier string from an arbitrary string
+- *`safeIdent $anyString`*: Makes a valid and safe identifier string from an arbitrary string.
+- *`array $optionalElem, $nextElem, ...`*: Creates a new array with specified elements.
+- *`append ($array, $elem, $nextElem, ...)`*: Appends elements to an existing array, returing a new array (like in Go).
 
 ===
 

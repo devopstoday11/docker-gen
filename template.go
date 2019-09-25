@@ -313,6 +313,14 @@ func dict(values ...interface{}) (map[string]interface{}, error) {
 	return dict, nil
 }
 
+func array(values ...interface{}) []interface{} {
+	return values
+}
+
+func arrayAppend(arr []interface{}, values ...interface{}) []interface{} {
+	return append(arr, values...)
+}
+
 func setValue(dict map[string]interface{}, key string, val interface{}) error {
 	if dict == nil {
 		return errors.New("nil dict provided")
@@ -483,6 +491,8 @@ func newTemplate(name string) *template.Template {
 		"contains":               contains,
 		"dict":                   dict,
 		"setValue":               setValue,
+		"array":                  array,
+		"append":                 arrayAppend,
 		"dir":                    dirList,
 		"exists":                 exists,
 		"first":                  arrayFirst,

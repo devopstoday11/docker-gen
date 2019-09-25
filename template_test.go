@@ -777,6 +777,31 @@ func TestSetValue(t *testing.T) {
 	}
 }
 
+func TestArray(t *testing.T) {
+	arr := array()
+	if len(arr) != 0 {
+		t.Fatal("array() did not create an empty array")
+	}
+
+	arr = array(1, 2)
+	if len(arr) != 2 {
+		t.Fatal("array() did not create a two-int array")
+	}
+
+	arr = array("a", "b")
+	if len(arr) != 2 {
+		t.Fatal("array() did not create a two-string array")
+	}
+}
+
+func TestArrayAppend(t *testing.T) {
+	arr := array(1)
+	arr = arrayAppend(arr, 2, 3)
+	if len(arr) != 3 {
+		t.Fatal("arrayAppend() did not result in a three-element array")
+	}
+}
+
 func TestSha1(t *testing.T) {
 	sum := hashSha1("/path")
 	if sum != "4f26609ad3f5185faaa9edf1e93aa131e2131352" {

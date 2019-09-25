@@ -4,6 +4,28 @@ include(2.3.1-http-default-server.m4)
 
 {{/* ID of the container this tool is running in */}}
 {{ $CurrentContainer := where $ "ID" .Docker.CurrentContainerID | first }}
+{{/* Dictionary with upstream definitions.
+
+    upstreams = {
+        "safeUpstreamIdent": {
+            "<IPAddress[:optionalPort]>": "commented upstream definition, e.g.: server 10.0.27.7:5000;",
+        }
+    }
+*/}}
+{{ $upstreams := dict }}
+
+{{/*
+    hosts = [{
+        hosts: ["host1.com", "host2.com"]
+        locations: {
+            "/": {
+                "upstream": "safeUpstreamIdent"
+            }
+        }
+    }]
+*/}}
+{{ $hosts := array }}
+
 
 {{ range $host, $containers := groupByMulti $ "Env.VIRTUAL_HOST" "," }}
 
