@@ -298,8 +298,9 @@ func contains(item map[string]string, key string) bool {
 
 func dict(values ...interface{}) (map[string]interface{}, error) {
 	if len(values)%2 != 0 {
-		return nil, errors.New("invalid dict call")
+		return nil, errors.New("dict requires even number of arguments (key val key val ...)")
 	}
+
 	dict := make(map[string]interface{}, len(values)/2)
 	for i := 0; i < len(values); i += 2 {
 		key, ok := values[i].(string)
@@ -308,13 +309,72 @@ func dict(values ...interface{}) (map[string]interface{}, error) {
 		}
 		dict[key] = values[i+1]
 	}
+
 	return dict, nil
+}
+
+func setValue(dict map[string]interface{}, key string, val interface{}) error {
+	if dict == nil {
+		return errors.New("nil dict provided")
+	}
+	dict[key] = val
+	return nil
 }
 
 func hashSha1(input string) string {
 	h := sha1.New()
 	io.WriteString(h, input)
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+var unsafeCharsRE = regexp.MustCompile(`[^a-zA-Z]+`)
+
+func safeIdent(input string) string {
+	prevR := ""
+	out := unsafeCharsRE.ReplaceAllStringFunc(input, func(inp string) string {
+		repl := ""
+
+		for _, s := range inp {
+			r := ""
+			switch s {
+			case '/':
+				r = "Slash"
+			case '\\', '|', '-', ' ', '\t':
+				r = "Sep"
+			case '.':
+				r = "Dot"
+			case ',':
+				r = "Comma"
+			case ':':
+				r = "Colon"
+			case '!':
+				r = "Excl"
+			case ';':
+				r = "Smcl"
+			case '*':
+				r = "Ast"
+			case '?':
+				r = "Quest"
+			}
+
+			// avoid duplicate replacements
+			if prevR == r {
+				return ""
+			}
+
+			prevR = r
+
+			repl += r
+		}
+
+		return repl
+	})
+
+	if len(out) == 0 {
+		out = "identTooShort"
+	}
+
+	return out
 }
 
 func marshalJson(input interface{}) (string, error) {
@@ -422,6 +482,7 @@ func newTemplate(name string) *template.Template {
 		"coalesce":               coalesce,
 		"contains":               contains,
 		"dict":                   dict,
+		"setValue":               setValue,
 		"dir":                    dirList,
 		"exists":                 exists,
 		"first":                  arrayFirst,
@@ -440,6 +501,7 @@ func newTemplate(name string) *template.Template {
 		"parseJson":              unmarshalJson,
 		"queryEscape":            url.QueryEscape,
 		"sha1":                   hashSha1,
+		"safeIdent":              safeIdent,
 		"split":                  strings.Split,
 		"splitN":                 strings.SplitN,
 		"trimPrefix":             trimPrefix,

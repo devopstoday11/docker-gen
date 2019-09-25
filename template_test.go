@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"testing"
 	"text/template"
 )
@@ -742,10 +743,60 @@ func TestDict(t *testing.T) {
 	}
 }
 
+func TestSetValue(t *testing.T) {
+	m, err := dict()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = setValue(m, "str", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = setValue(m, "num", 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = setValue(m, "arr", []string{"a", "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m["str"] != "test" {
+		t.Fatalf("setValue didn't set the string value properly")
+	}
+
+	if m["num"] != 123 {
+		t.Fatalf("setValue didn't set the int value properly")
+	}
+
+	if arr, ok := m["arr"].([]string); !ok || len(arr) != 2 {
+		t.Fatalf("setValue didn't set the []string value properly")
+	}
+}
+
 func TestSha1(t *testing.T) {
 	sum := hashSha1("/path")
 	if sum != "4f26609ad3f5185faaa9edf1e93aa131e2131352" {
 		t.Fatal("Incorrect SHA1 sum")
+	}
+}
+
+func TestSafeIdent(t *testing.T) {
+	safeRE := regexp.MustCompile(`^[a-zA-Z]+$`)
+
+	unsafe := "%1/location/.*regexp-"
+	safe := safeIdent(unsafe)
+	if !safeRE.MatchString(safe) {
+		t.Fatalf("did not make safe string %s from %s", safe, unsafe)
+	}
+
+	unsafe = ""
+	safe = safeIdent(unsafe)
+	if len(safe) == 0 {
+		t.Fatalf("did not make a safe non-empty string from %s", unsafe)
 	}
 }
 

@@ -382,6 +382,11 @@ For example, this is a JSON version of an emitted RuntimeContainer struct:
 * *`whereLabelDoesNotExist $containers $label`*: Filters a slice of containers based on the non-existence of the label `$label`.
 * *`whereLabelValueMatches $containers $label $pattern`*: Filters a slice of containers based on the existence of the label `$label` with values matching the regular expression `$pattern`.
 
+**Newly added**
+
+- *`setValue $dict $key $value`*: Sets value for a key in the dict, overwriting existing if any.
+- *`safeIdent $anyString`*: Makes a valid and safe identifier string from an arbitrary string
+
 ===
 
 ### Examples
