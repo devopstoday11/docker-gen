@@ -97,10 +97,14 @@ Options:
       log the output(stdout/stderr) of notify command
   -notify-sighup container-ID
       send HUP signal to container.  Equivalent to 'docker kill -s HUP container-ID'
+  -notify-sighup-service service-name
+      send HUP signal to all containers belong to a service
   -only-exposed
       only include containers with exposed ports
   -only-published
       only include containers with published ports (implies -only-exposed)
+  -print-context
+      only print the generated template context
   -include-stopped
       include stopped containers
   -tlscacert string
@@ -350,6 +354,11 @@ For example, this is a JSON version of an emitted RuntimeContainer struct:
 * *`coalesce ...`*: Returns the first non-nil argument.
 * *`contains $map $key`*: Returns `true` if `$map` contains `$key`. Takes maps from `string` to `string`.
 * *`dict $key $value ...`*: Creates a map from a list of pairs. Each `$key` value must be a `string`, but the `$value` can be any type (or `nil`). Useful for passing more than one value as a pipeline context to subtemplates.
+* *`getValue $map $key $optionalDefault`*: Gets the value from the key or the default.
+* *`setValue $map $key $value ...`*: Sets value for a key in the map, overwriting existing if any. Can be repeated in pairs.
+* *`safeIdent $anyString`*: Makes a valid and safe identifier string from an arbitrary string.
+* *`array $optionalElem, $nextElem, ...`*: Creates a new array with specified elements.
+* *`append ($array, $elem, $nextElem, ...)`*: Appends elements to an existing array, returing a new array (like in Go).
 * *`dir $path`*: Returns an array of filenames in the specified `$path`.
 * *`exists $path`*: Returns `true` if `$path` refers to an existing file or directory. Takes a string.
 * *`first $array`*: Returns the first value of an array or nil if the arry is nil or empty.
@@ -381,14 +390,6 @@ For example, this is a JSON version of an emitted RuntimeContainer struct:
 * *`whereLabelExists $containers $label`*: Filters a slice of containers based on the existence of the label `$label`.
 * *`whereLabelDoesNotExist $containers $label`*: Filters a slice of containers based on the non-existence of the label `$label`.
 * *`whereLabelValueMatches $containers $label $pattern`*: Filters a slice of containers based on the existence of the label `$label` with values matching the regular expression `$pattern`.
-
-**Newly added**
-
-- *`getValue $map $key $optionalDefault`*: Gets the value from the key or the default.
-- *`setValue $map $key $value ...`*: Sets value for a key in the map, overwriting existing if any. Can be repeated in pairs.
-- *`safeIdent $anyString`*: Makes a valid and safe identifier string from an arbitrary string.
-- *`array $optionalElem, $nextElem, ...`*: Creates a new array with specified elements.
-- *`append ($array, $elem, $nextElem, ...)`*: Appends elements to an existing array, returing a new array (like in Go).
 
 ===
 
