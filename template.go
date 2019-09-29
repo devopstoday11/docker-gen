@@ -321,12 +321,63 @@ func arrayAppend(arr []interface{}, values ...interface{}) []interface{} {
 	return append(arr, values...)
 }
 
-func setValue(dict map[string]interface{}, key string, val interface{}) error {
+func setValue(dict map[string]interface{}, key string, val interface{}, more ...interface{}) (string, error) {
 	if dict == nil {
-		return errors.New("nil dict provided")
+		return "", errors.New("nil dict provided")
 	}
+
 	dict[key] = val
-	return nil
+
+	if len(more)%2 != 0 {
+		return "", errors.New("setValue requires dict instance and even number of arguments (map key val key val ...)")
+	}
+
+	for i := 0; i < len(more); i += 2 {
+		key, ok := more[i].(string)
+		if !ok {
+			return "", errors.New("setValue dict keys must be strings")
+		}
+		dict[key] = more[i+1]
+	}
+
+	return "", nil
+}
+
+func getValue(dict interface{}, key string, def ...interface{}) (interface{}, error) {
+	var (
+		val interface{}
+		has bool
+	)
+
+	if dict == nil {
+		goto returnDefault
+	}
+
+	if d, ok := dict.(map[string]interface{}); ok {
+		val, has = d[key]
+		if !has {
+			goto returnDefault
+		}
+
+		return val, nil
+	} else if d, ok := dict.(map[string]string); ok {
+		val, has = d[key]
+		if !has {
+			goto returnDefault
+		}
+
+		return val, nil
+	} else {
+		return nil, fmt.Errorf("getValue unexpected dict type %v; expected string:interface or string:string",
+			reflect.TypeOf(dict))
+	}
+
+returnDefault:
+	if len(def) > 0 {
+		return def[0], nil
+	}
+
+	return nil, nil
 }
 
 func hashSha1(input string) string {
@@ -335,11 +386,19 @@ func hashSha1(input string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+var safeCharsRE = regexp.MustCompile(`[a-zA-Z]+`)
 var unsafeCharsRE = regexp.MustCompile(`[^a-zA-Z]+`)
 
 func safeIdent(input string) string {
 	prevR := ""
-	out := unsafeCharsRE.ReplaceAllStringFunc(input, func(inp string) string {
+
+	// capitalize first characters of safe parts
+	out := safeCharsRE.ReplaceAllStringFunc(input, func(inp string) string {
+		return strings.ToUpper(inp[0:1]) + inp[1:]
+	})
+
+	// replace unsafe
+	out = unsafeCharsRE.ReplaceAllStringFunc(out, func(inp string) string {
 		repl := ""
 
 		for _, s := range inp {
@@ -378,6 +437,7 @@ func safeIdent(input string) string {
 		return repl
 	})
 
+	// make sure some non-empty ident is returned
 	if len(out) == 0 {
 		out = "identTooShort"
 	}
@@ -385,9 +445,34 @@ func safeIdent(input string) string {
 	return out
 }
 
+func safeSplit(what interface{}, separator string) ([]string, error) {
+	if what == nil {
+		return nil, nil
+	}
+
+	if inp, ok := what.(string); ok {
+		return strings.Split(inp, separator), nil
+	}
+
+	return nil, errors.New("split requires string or nil input")
+}
+
+func safeSplitN(what interface{}, separator string, num int) ([]string, error) {
+	if what == nil {
+		return nil, nil
+	}
+
+	if inp, ok := what.(string); ok {
+		return strings.SplitN(inp, separator, num), nil
+	}
+
+	return nil, errors.New("splitN requires string or nil input")
+}
+
 func marshalJson(input interface{}) (string, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
 	if err := enc.Encode(input); err != nil {
 		return "", err
 	}
@@ -491,6 +576,7 @@ func newTemplate(name string) *template.Template {
 		"contains":               contains,
 		"dict":                   dict,
 		"setValue":               setValue,
+		"getValue":               getValue,
 		"array":                  array,
 		"append":                 arrayAppend,
 		"dir":                    dirList,
@@ -512,8 +598,8 @@ func newTemplate(name string) *template.Template {
 		"queryEscape":            url.QueryEscape,
 		"sha1":                   hashSha1,
 		"safeIdent":              safeIdent,
-		"split":                  strings.Split,
-		"splitN":                 strings.SplitN,
+		"split":                  safeSplit,
+		"splitN":                 safeSplitN,
 		"trimPrefix":             trimPrefix,
 		"trimSuffix":             trimSuffix,
 		"trim":                   trim,

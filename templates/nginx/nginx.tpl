@@ -43,42 +43,6 @@
 {{ end }}
 {{ end }}
 
-{{ define "upstream" }}
-{{ if .Comment }}
-		# {{ .Comment }}
-{{ end }}
-{{ if .Address }}
-	{{/* If we got the containers from swarm and this container's port is published to host, use host IP:PORT */}}
-	{{ if and .Container.Node.ID .Address.HostPort }}
-		# {{ .Container.Node.Name }}/{{ .Container.Name }}
-		server {{ .Container.Node.Address.IP }}:{{ .Address.HostPort }};
-	{{/* If there is no swarm node or the port is not published on host, use container's IP:PORT */}}
-	{{ else if .Network }}
-		# {{ .Container.Name }}
-		server {{ .Network.IP }}:{{ .Address.Port }};
-	{{ end }}
-{{ else if .Network }}
-		# {{ .Container.Name }}
-	{{ if .Network.IP }}
-		{{ if not .Comment }}
-		# network IP is known but the adress or port is not :(
-		{{ end }}
-		server {{ .Network.IP }} down;
-	{{ else }}
-		{{ if not .Comment }}
-		# no address and no network IP known
-		{{ end }}
-		server 127.0.0.1 down;
-	{{ end }}
-{{ else }}
-		{{ if not .Comment }}
-		# no connection info available
-		{{ end }}
-		server 127.0.0.1 down;
-{{ end }}
-
-{{ end }}
-
 
 {{ $worker_processes := or ($.Env.WORKER_PROCESSES) "auto" }}
 {{ $max_worker_connections := or ($.Env.MAX_WORKER_CONNECTIONS) "16384" }}
@@ -119,21 +83,6 @@ events {
 }
 
 http {
-	include       mime.types;
-	default_type  application/octet-stream;
-
-	#log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-	#                  '$status $body_bytes_sent "$http_referer" '
-	#                  '"$http_user_agent" "$http_x_forwarded_for"';
-
-	#access_log  logs/access.log  main;
-
-	sendfile        on;
-	#tcp_nopush     on;
-
-	keepalive_timeout  65;
-
-	#gzip  on;
 
 	# If we receive X-Forwarded-Proto, pass it through; otherwise, pass along the
 	# scheme used to connect to this server
@@ -251,83 +200,351 @@ http {
 
 {{/* ID of the container this tool is running in */}}
 {{ $CurrentContainer := where $ "ID" .Docker.CurrentContainerID | first }}
+{{/* Dictionary with upstream definitions.
 
+    $globalUpstreams = {
+        "safeUpstreamIdent": {
+            "[optionalIPAddress[:optionalPort]@]network": {
+                "Comment": "optional upstream comment",
+                "Definition": "server 10.0.27.7:5000;",
+            }
+        }
+    }
+*/}}
+{{ $globalUpstreams := dict }}
+
+{{/*
+    $globalHosts = {
+        "host1.com" {
+            "Locations": {
+                "/": {
+                    "Upstream": "safeUpstreamIdent",
+					"Redirect": { // optional redirect (takes precedence Upstream) //TODO: implement in gen
+						"Code": 301, // redirection HTTP code (301 default)
+						"Location": "http;//$host$request_uri?myparam=something" // redirection target (can use nginx vars)
+					},
+					"Proto": "http", // protocol to use for communication with the container service
+					"Root": "/var/www/public" // root for the location
+                }
+            },
+			"Default": true, // whether the host is default_host (default false)
+			"NetworkAccess": "external", // external (any) or internal (private subnets only)
+			"CertName": "", // https TLS cert file name (without .key/.cert suffix)
+			"HTTPSMethod": "redirect", // redirect (redir to https), noredirect, nohttp, nohttps
+			"SSLPolicy": "", // use non-default SSL policy (allowed TLS ciphers)
+			"HSTS": "max-age=31536000", // HSTS header
+        }
+    }
+*/}}
+{{ $globalHosts := dict }}
+
+{{/* use Swarm services to generate upstreams and servers */}}
+{{ range $serviceID, $service := $.Services }}
+    {{ $labels := $service.Labels }}
+    {{ $hosts := split (getValue $labels "dg.nginx/host") "," }}
+    {{ range $host := $hosts }}
+        {{ $upstreamPort := coalesce (getValue $labels "dg.nginx/port") "80" }}
+
+        {{/* get existing or create a new dictionary for this host */}}
+        {{ $hostDict := getValue $globalHosts $host dict }}
+        {{ setValue $globalHosts $host $hostDict}}
+
+        {{/* get existing or create a new dictionary for the upstream for the host */}}
+        {{ $upstreamName := safeIdent $service.Name }}
+        {{ $upstreamDict := getValue $globalUpstreams $upstreamName dict }}
+        {{ setValue $globalUpstreams $upstreamName $upstreamDict}}
+
+        {{ range $svcNetworkID, $svcNetwork := $service.Networks }}
+            {{ range $knownNetwork := $CurrentContainer.Networks }}
+                {{ if (and (ne $svcNetwork.Name "ingress") (or (eq $knownNetwork.Name $svcNetwork.Name) (eq $knownNetwork.Name "host"))) }}
+                    {{ $upstreamComment := printf "service %s via %s network" $service.Name $knownNetwork.Name }}
+                    {{ $upstreamIP := $svcNetwork.IP }}
+                    {{ $upstreamKey := printf "%s:%s@%s" $upstreamIP $upstreamPort $svcNetwork.Name }}
+                    {{ $upstreamDef := printf "server %s:%s" $upstreamIP $upstreamPort }}
+                    {{ setValue $upstreamDict $upstreamKey (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
+                {{ else }}
+                    {{/* TODO: cannot connect to the service */}}
+                {{ end }}
+            {{ end }}
+        {{ end }}
+
+        {{/* locations */}}
+        {{ $location := coalesce (getValue $labels "dg.nginx/location") "/" }}
+
+        {{/* set host attributes */}}
+	    {{ $locationDict := dict "Upstream" $upstreamName }}
+	    {{ setValue $hostDict "Locations" (dict $location $locationDict) }}
+
+    {{ end }}
+{{ end }}
+{{/* original docker-gen behavior - using containers to define virtual hosts */}}
 {{ range $host, $containers := groupByMulti $ "Env.VIRTUAL_HOST" "," }}
 
-    {{ $host := trim $host }}
-    {{ $is_regexp := hasPrefix "~" $host }}
-    {{ $upstream_name := when $is_regexp (safeIdent $host) $host }}
+	{{ $host := trim $host }}
+	{{ $upstream_name := safeIdent $host }}
 
-	# {{ $host }}
-	upstream {{ $upstream_name }} {
-		{{ range $container := $containers }}
-	{{ if $container.Service }}
-		{{ range $knownNetwork := $CurrentContainer.Networks }}
-			{{ range $swarmSvcNetwork := $container.Service.Networks }}
-				{{ if (and (ne $swarmSvcNetwork.Name "ingress") (or (eq $knownNetwork.Name $swarmSvcNetwork.Name) (eq $knownNetwork.Name "host"))) }}
-					{{ $comment := (printf "Swarm service \"%s\" can be contacted via \"%s\" network" $container.Service.Name $swarmSvcNetwork.Name) }}
-					{{ $port := coalesce $container.Env.VIRTUAL_PORT "80" }}
-					{{ $address := (dict "Port" $port) }}
-					{{ template "upstream" (dict "Container" $container "Address" $address "Network" $swarmSvcNetwork "Comment" $comment) }}
-				{{ else }}
-					{{ $comment := (printf "Cannot connect to network \"%s\" of swarm service \"%s\"" $swarmSvcNetwork.Name $container.Service.Name) }}
-					{{ template "upstream" (dict "Comment" $comment) }}
-				{{ end }}
-			{{ end }}
-		{{ end }}
-	{{ else }}
+	{{/* (1) get existing or create a new dictionary for the upstream for the host */}}
+	{{ $upstreamDict := getValue $globalUpstreams $upstream_name dict }}
+
+	{{ $containerSetDefinesServer := false }}
+
+	{{ range $container := $containers }}
 		{{ $addrLen := len $container.Addresses }}
 
-		{{ range $knownNetwork := $CurrentContainer.Networks }}
-			{{ range $containerNetwork := $container.Networks }}
-				{{ if (and (ne $containerNetwork.Name "ingress") (or (eq $knownNetwork.Name $containerNetwork.Name) (eq $knownNetwork.Name "host"))) }}
-					{{ $comment := (printf "Can be contacted via \"%s\" network" $containerNetwork.Name) }}
+		{{/* skip containers with Swarm service - service labels and virtual IP will be used for configuration of these */}}
+		{{ if or (not $container.Service) true }}{{/*TODO: temporarily true!! */}}
+			{{ $containerSetDefinesServer = true }}
 
-					{{/* If only 1 port exposed, use that */}}
-					{{ if eq $addrLen 1 }}
-						{{ $address := index $container.Addresses 0 }}
-						{{ template "upstream" (dict "Container" $container "Address" $address "Network" $containerNetwork "Comment" $comment) }}
-					{{/* If more than one port exposed, use the one matching VIRTUAL_PORT env var, falling back to standard web port 80 */}}
+			{{ range $knownNetwork := $CurrentContainer.Networks }}
+				{{ range $containerNetwork := $container.Networks }}
+					{{ if (and (ne $containerNetwork.Name "ingress") (or (eq $knownNetwork.Name $containerNetwork.Name) (eq $knownNetwork.Name "host"))) }}
+						{{ $comment := (printf "can be contacted via %s network" $containerNetwork.Name) }}
+
+						{{/* If only 1 port exposed, use that */}}
+						{{ if eq $addrLen 1 }}
+							{{ $address := index $container.Addresses 0 }}
+							{{ $upstreamIP := "" }}
+{{ $upstreamPort := "" }}
+{{ $upstreamNet := "" }}
+{{ $upstreamComment := "" }}
+
+{{ if $address }}
+	{{/* If we got the containers from swarm and this container's port is published to host, use host IP:PORT */}}
+	{{ if and $container.Node.ID $address.HostPort }}
+		{{ $upstreamComment = printf "%s/%s" $container.Node.Name $container.Name }}
+		{{ $upstreamIP = $container.Node.Address.IP }}
+		{{ $upstreamPort = $address.HostPort }}
+
+	{{/* If there is no swarm node or the port is not published on host, use container's IP:PORT */}}
+	{{ else if $containerNetwork }}
+		{{ $upstreamComment = printf "container %s" $container.Name }}
+		{{ $upstreamIP = $containerNetwork.IP }}
+		{{ $upstreamPort = $address.Port }}
+	{{ end }}
+{{ else if $containerNetwork }}
+	{{ if $containerNetwork.IP }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - network IP is known but the adress or port is not :(" $container.Name) }}
+	{{ else }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - no address and no network IP known :(" $container.Name) }}
+	{{ end }}
+{{ else }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - connection info not available" $container.Name) }}
+{{ end }}
+
+{{ $upstreamDef := "" }}
+{{ $upstreamKey := "" }}
+{{ if and $upstreamIP $upstreamPort }}
+	{{ $upstreamDef = printf "server %s:%s" $upstreamIP $upstreamPort }}
+	{{ $upstreamKey = printf "%s:%s@%s" $upstreamIP $upstreamPort $containerNetwork.Name }}
+{{ else if $upstreamIP }}
+	{{ $upstreamDef = printf "server %s down" $upstreamIP $upstreamPort }}
+	{{ $upstreamKey = printf "%s@%s" $upstreamIP $containerNetwork.Name }}
+{{ else }}
+	{{ $upstreamDef = "server 127.0.0.1 down" }}
+	{{ $upstreamKey = printf "%s" $containerNetwork.Name }}
+{{ end }}
+
+{{ setValue $upstreamDict $upstreamKey (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
+						{{/* If more than one port exposed, use the one matching VIRTUAL_PORT env var, falling back to standard web port 80 */}}
+						{{ else }}
+							{{ $port := coalesce $container.Env.VIRTUAL_PORT "80" }}
+							{{ $address := where $container.Addresses "Port" $port | first }}
+							{{ $address := coalesce $address (dict "Port" $port) }}
+							{{ $upstreamIP := "" }}
+{{ $upstreamPort := "" }}
+{{ $upstreamNet := "" }}
+{{ $upstreamComment := "" }}
+
+{{ if $address }}
+	{{/* If we got the containers from swarm and this container's port is published to host, use host IP:PORT */}}
+	{{ if and $container.Node.ID $address.HostPort }}
+		{{ $upstreamComment = printf "%s/%s" $container.Node.Name $container.Name }}
+		{{ $upstreamIP = $container.Node.Address.IP }}
+		{{ $upstreamPort = $address.HostPort }}
+
+	{{/* If there is no swarm node or the port is not published on host, use container's IP:PORT */}}
+	{{ else if $containerNetwork }}
+		{{ $upstreamComment = printf "container %s" $container.Name }}
+		{{ $upstreamIP = $containerNetwork.IP }}
+		{{ $upstreamPort = $address.Port }}
+	{{ end }}
+{{ else if $containerNetwork }}
+	{{ if $containerNetwork.IP }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - network IP is known but the adress or port is not :(" $container.Name) }}
+	{{ else }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - no address and no network IP known :(" $container.Name) }}
+	{{ end }}
+{{ else }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - connection info not available" $container.Name) }}
+{{ end }}
+
+{{ $upstreamDef := "" }}
+{{ $upstreamKey := "" }}
+{{ if and $upstreamIP $upstreamPort }}
+	{{ $upstreamDef = printf "server %s:%s" $upstreamIP $upstreamPort }}
+	{{ $upstreamKey = printf "%s:%s@%s" $upstreamIP $upstreamPort $containerNetwork.Name }}
+{{ else if $upstreamIP }}
+	{{ $upstreamDef = printf "server %s down" $upstreamIP $upstreamPort }}
+	{{ $upstreamKey = printf "%s@%s" $upstreamIP $containerNetwork.Name }}
+{{ else }}
+	{{ $upstreamDef = "server 127.0.0.1 down" }}
+	{{ $upstreamKey = printf "%s" $containerNetwork.Name }}
+{{ end }}
+
+{{ setValue $upstreamDict $upstreamKey (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
+						{{ end }}
 					{{ else }}
-						{{ $port := coalesce $container.Env.VIRTUAL_PORT "80" }}
-						{{ $address := where $container.Addresses "Port" $port | first }}
-						{{ $address := coalesce $address (dict "Port" $port) }}
-						{{ template "upstream" (dict "Container" $container "Address" $address "Network" $containerNetwork "Comment" $comment) }}
+						{{ $address := "" }}
+						{{ $comment := (printf "container %s cannot connect to %s network" $container.Name $containerNetwork.Name) }}
+						{{ $upstreamIP := "" }}
+{{ $upstreamPort := "" }}
+{{ $upstreamNet := "" }}
+{{ $upstreamComment := "" }}
+
+{{ if $address }}
+	{{/* If we got the containers from swarm and this container's port is published to host, use host IP:PORT */}}
+	{{ if and $container.Node.ID $address.HostPort }}
+		{{ $upstreamComment = printf "%s/%s" $container.Node.Name $container.Name }}
+		{{ $upstreamIP = $container.Node.Address.IP }}
+		{{ $upstreamPort = $address.HostPort }}
+
+	{{/* If there is no swarm node or the port is not published on host, use container's IP:PORT */}}
+	{{ else if $containerNetwork }}
+		{{ $upstreamComment = printf "container %s" $container.Name }}
+		{{ $upstreamIP = $containerNetwork.IP }}
+		{{ $upstreamPort = $address.Port }}
+	{{ end }}
+{{ else if $containerNetwork }}
+	{{ if $containerNetwork.IP }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - network IP is known but the adress or port is not :(" $container.Name) }}
+	{{ else }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - no address and no network IP known :(" $container.Name) }}
+	{{ end }}
+{{ else }}
+		{{ $upstreamComment = coalesce $comment (printf "container %s - connection info not available" $container.Name) }}
+{{ end }}
+
+{{ $upstreamDef := "" }}
+{{ $upstreamKey := "" }}
+{{ if and $upstreamIP $upstreamPort }}
+	{{ $upstreamDef = printf "server %s:%s" $upstreamIP $upstreamPort }}
+	{{ $upstreamKey = printf "%s:%s@%s" $upstreamIP $upstreamPort $containerNetwork.Name }}
+{{ else if $upstreamIP }}
+	{{ $upstreamDef = printf "server %s down" $upstreamIP $upstreamPort }}
+	{{ $upstreamKey = printf "%s@%s" $upstreamIP $containerNetwork.Name }}
+{{ else }}
+	{{ $upstreamDef = "server 127.0.0.1 down" }}
+	{{ $upstreamKey = printf "%s" $containerNetwork.Name }}
+{{ end }}
+
+{{ setValue $upstreamDict $upstreamKey (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
 					{{ end }}
-				{{ else }}
-					{{ $comment := (printf "Cannot connect to \"%s\" network of this container" $containerNetwork.Name) }}
-					{{ template "upstream" (dict "Comment" $comment) }}
 				{{ end }}
 			{{ end }}
 		{{ end }}
+
 	{{ end }}
+
+	{{ if $containerSetDefinesServer }}
+	{{/* (2) now that we know the upstream is going to be used, set its upstream dict to the global list of upstreams, also see (1) */}}
+	{{ setValue $globalUpstreams $upstream_name $upstreamDict}}
+
+	{{/* set server{ ... } definition with location / { ... } */}}
+	
+
+
+{{/* get existing or create a new dictionary for this host */}}
+{{ $hostDict := getValue $globalHosts $host dict }}
+{{ setValue $globalHosts $host $hostDict}}
+
+
+
+{{/* --- DEFAULT LOCATION --- */}}
+{{ $defaultLocationDict := dict "Upstream" $upstream_name }}
+
+{{ $vhostRoot := first (groupByKeys $containers "Env.VIRTUAL_ROOT") }}
+{{ if $vhostRoot }}
+	{{ setValue $defaultLocationDict "Root" $vhostRoot }}
+{{ end }}
+
+{{ $proto := first (groupByKeys $containers "Env.VIRTUAL_PROTO") }}
+{{ if $proto }}
+	{{ setValue $defaultLocationDict "Proto" $proto }}
+{{ end }}
+
+
+
+
+{{/* --- HOST DICT ATTRIBUTES --- */}}
+{{ setValue $hostDict "Locations" (dict "/" $defaultLocationDict) }}
+
+{{ $networkAccess := first (groupByKeys $containers "Env.NETWORK_ACCESS") }}
+{{ if $networkAccess }}
+	{{ setValue $hostDict "NetworkAccess" $networkAccess }}
+{{ end }}
+
+{{ $default_host := or ($.Env.DEFAULT_HOST) "" }}
+{{ if eq $host $default_host }}
+	{{ setValue $hostDict "Default" true}}
+{{ end }}
+
+{{ $certName := first (groupByKeys $containers "Env.CERT_NAME") }}
+{{ if $certName }}
+	{{ setValue $hostDict "CertName" $certName }}
+{{ end }}
+
+{{ $httpsMethod := first (groupByKeys $containers "Env.HTTPS_METHOD") }}
+{{ if $httpsMethod }}
+	{{ setValue $hostDict "HTTPSMethod" $httpsMethod }}
+{{ end }}
+
+{{ $sslPolicy := first (groupByKeys $containers "Env.SSL_POLICY") }}
+{{ if $sslPolicy }}
+	{{ setValue $hostDict "SSLPolicy" $sslPolicy }}
+{{ end }}
+
+{{ $hsts := first (groupByKeys $containers "Env.HSTS") }}
+{{ if $hsts }}
+	{{ setValue $hostDict "HSTS" $hsts }}
+{{ end }}
+
+	{{ end }}
+
+{{ end }}
+{{ range $upstreamName, $upstreamNets := $globalUpstreams }}
+	upstream {{ $upstreamName }} {
+{{ range $upstreamNet, $upstream := $upstreamNets }}
+		{{ if $upstream.Comment }}# {{ $upstream.Comment }}{{ end }}
+		{{ if $upstream.Definition }}{{ $upstream.Definition }};{{ end }}
 {{ end }}
 	}
+{{ end }}
+{{ range $host, $hostDict := $globalHosts }}
 
-	{{ $default_host := or ($.Env.DEFAULT_HOST) "" }}
-{{ $default_server := index (dict $host "" $default_host "default_server") $host }}
+{{ $default_host := or ($.Env.DEFAULT_HOST) "" }}
+{{ $default_server := "" }}
+{{ if getValue $hostDict "Default" }}
+	{{ $default_server = "default_server" }}
+{{ end }}
 
 {{/* Get the VIRTUAL_PROTO defined by containers w/ the same vhost, falling back to "http" */}}
-{{ $proto := trim (or (first (groupByKeys $containers "Env.VIRTUAL_PROTO")) "http") }}
+{{ $proto := getValue $hostDict "Proto" "http" }}
 
 {{/* Get the NETWORK_ACCESS defined by containers w/ the same vhost, falling back to "external" */}}
-{{ $network_tag := or (first (groupByKeys $containers "Env.NETWORK_ACCESS")) "external" }}
+{{ $network_tag := getValue $hostDict "NetworkAccess" "external" }}
 
 {{/* Get the HTTPS_METHOD defined by containers w/ the same vhost, falling back to "redirect" */}}
-{{ $https_method := or (first (groupByKeys $containers "Env.HTTPS_METHOD")) "redirect" }}
+{{ $https_method := getValue $hostDict "HTTPSMethod" "redirect" }}
 
 {{/* Get the SSL_POLICY defined by containers w/ the same vhost, falling back to empty string (use default) */}}
-{{ $ssl_policy := or (first (groupByKeys $containers "Env.SSL_POLICY")) "" }}
+{{ $ssl_policy := getValue $hostDict "SSLPolicy" "" }}
 
 {{/* Get the HSTS defined by containers w/ the same vhost, falling back to "max-age=31536000" */}}
-{{ $hsts := or (first (groupByKeys $containers "Env.HSTS")) "max-age=31536000" }}
-
-{{/* Get the VIRTUAL_ROOT By containers w/ use fastcgi root */}}
-{{ $vhost_root := or (first (groupByKeys $containers "Env.VIRTUAL_ROOT")) "/var/www/public" }}
+{{ $hsts := getValue $hostDict "HSTS" "max-age=31536000" }}
 
 
 {{/* Get the first cert name defined by containers w/ the same vhost */}}
-{{ $certName := (first (groupByKeys $containers "Env.CERT_NAME")) }}
+{{ $certName := getValue $hostDict "CertName" }}
 
 {{/* Get the best matching cert  by name for the vhost. */}}
 {{ $vhostCert := "" }}
@@ -401,16 +618,19 @@ http {
 		include /etc/nginx/vhost.d/default;
 		{{ end }}
 
-		location / {
-					{{ if eq $proto "uwsgi" }}
+		{{ range $location, $locationDict := getValue $hostDict "Locations" }}
+		location {{ $location }} {
+			{{ $proto := trim (getValue $locationDict "Proto" "http") }}
+{{ $upstream_name := trim (getValue $locationDict "Upstream" "") }}
+
+		{{ if eq $proto "uwsgi" }}
 			include uwsgi_params;
-			uwsgi_pass {{ trim $proto }}://{{ trim $upstream_name }};
+			uwsgi_pass {{ $proto }}://{{ $upstream_name }};
 		{{ else if eq $proto "fastcgi" }}
-			root   {{ trim $vhost_root }};
 			include fastcgi.conf;
-			fastcgi_pass {{ trim $upstream_name }};
+			fastcgi_pass {{ $upstream_name }};
 		{{ else }}
-			proxy_pass {{ trim $proto }}://{{ trim $upstream_name }};
+			proxy_pass {{ $proto }}://{{ $upstream_name }};
 		{{ end }}
 
 		{{ if (exists (printf "/etc/nginx/htpasswd/%s" $host)) }}
@@ -422,7 +642,13 @@ http {
 		{{ else if (exists "/etc/nginx/vhost.d/default_location") }}
 			include /etc/nginx/vhost.d/default_location;
 		{{ end }}
+
+		{{ $root := trim (getValue $locationDict "Root" "") }}
+		{{ if $root }}
+			root   {{ $root }};
+		{{ end }}
 		}
+		{{ end }}
 	}
 
 {{ end }}{{/* if $is_https */}}
@@ -448,16 +674,19 @@ http {
 		include /etc/nginx/vhost.d/default;
 		{{ end }}
 
-		location / {
-					{{ if eq $proto "uwsgi" }}
+		{{ range $location, $locationDict := getValue $hostDict "Locations" }}
+		location {{ $location }} {
+			{{ $proto := trim (getValue $locationDict "Proto" "http") }}
+{{ $upstream_name := trim (getValue $locationDict "Upstream" "") }}
+
+		{{ if eq $proto "uwsgi" }}
 			include uwsgi_params;
-			uwsgi_pass {{ trim $proto }}://{{ trim $upstream_name }};
+			uwsgi_pass {{ $proto }}://{{ $upstream_name }};
 		{{ else if eq $proto "fastcgi" }}
-			root   {{ trim $vhost_root }};
 			include fastcgi.conf;
-			fastcgi_pass {{ trim $upstream_name }};
+			fastcgi_pass {{ $upstream_name }};
 		{{ else }}
-			proxy_pass {{ trim $proto }}://{{ trim $upstream_name }};
+			proxy_pass {{ $proto }}://{{ $upstream_name }};
 		{{ end }}
 
 		{{ if (exists (printf "/etc/nginx/htpasswd/%s" $host)) }}
@@ -469,7 +698,13 @@ http {
 		{{ else if (exists "/etc/nginx/vhost.d/default_location") }}
 			include /etc/nginx/vhost.d/default_location;
 		{{ end }}
+
+		{{ $root := trim (getValue $locationDict "Root" "") }}
+		{{ if $root }}
+			root   {{ $root }};
+		{{ end }}
 		}
+		{{ end }}
 	}
 
 {{/* Block SSL access if no SSL is configured for the host and default certs exist */}}
@@ -490,6 +725,17 @@ http {
 
 {{ end }}{{/* if or (not $is_https) (eq $https_method "noredirect") */}}
 
-{{ end }}
+
+{{ end }}{{/* range $host, $hostDict := $globalHosts */}}
+
+{{/*
+	//!!!!! DEBUG !!!!!
+	// upstreams
+	{{json $globalUpstreams}}
+
+	//hosts 
+	{{json $globalHosts}}
+	//!!!!! END DEBUG !!!!!
+*/}}
 
 }

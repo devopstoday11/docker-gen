@@ -1,12 +1,14 @@
+{{ $proto := trim (getValue $locationDict "Proto" "http") }}
+{{ $upstream_name := trim (getValue $locationDict "Upstream" "") }}
+
 		{{ if eq $proto "uwsgi" }}
 			include uwsgi_params;
-			uwsgi_pass {{ trim $proto }}://{{ trim $upstream_name }};
+			uwsgi_pass {{ $proto }}://{{ $upstream_name }};
 		{{ else if eq $proto "fastcgi" }}
-			root   {{ trim $vhost_root }};
 			include fastcgi.conf;
-			fastcgi_pass {{ trim $upstream_name }};
+			fastcgi_pass {{ $upstream_name }};
 		{{ else }}
-			proxy_pass {{ trim $proto }}://{{ trim $upstream_name }};
+			proxy_pass {{ $proto }}://{{ $upstream_name }};
 		{{ end }}
 
 		{{ if (exists (printf "/etc/nginx/htpasswd/%s" $host)) }}
@@ -17,4 +19,9 @@
 			include {{ printf "/etc/nginx/vhost.d/%s_location" $host}};
 		{{ else if (exists "/etc/nginx/vhost.d/default_location") }}
 			include /etc/nginx/vhost.d/default_location;
+		{{ end }}
+
+		{{ $root := trim (getValue $locationDict "Root" "") }}
+		{{ if $root }}
+			root   {{ $root }};
 		{{ end }}

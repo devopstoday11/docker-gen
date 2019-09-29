@@ -1,27 +1,29 @@
+{{ range $host, $hostDict := $globalHosts }}
+
 {{ $default_host := or ($.Env.DEFAULT_HOST) "" }}
-{{ $default_server := index (dict $host "" $default_host "default_server") $host }}
+{{ $default_server := "" }}
+{{ if getValue $hostDict "Default" }}
+	{{ $default_server = "default_server" }}
+{{ end }}
 
 {{/* Get the VIRTUAL_PROTO defined by containers w/ the same vhost, falling back to "http" */}}
-{{ $proto := trim (or (first (groupByKeys $containers "Env.VIRTUAL_PROTO")) "http") }}
+{{ $proto := getValue $hostDict "Proto" "http" }}
 
 {{/* Get the NETWORK_ACCESS defined by containers w/ the same vhost, falling back to "external" */}}
-{{ $network_tag := or (first (groupByKeys $containers "Env.NETWORK_ACCESS")) "external" }}
+{{ $network_tag := getValue $hostDict "NetworkAccess" "external" }}
 
 {{/* Get the HTTPS_METHOD defined by containers w/ the same vhost, falling back to "redirect" */}}
-{{ $https_method := or (first (groupByKeys $containers "Env.HTTPS_METHOD")) "redirect" }}
+{{ $https_method := getValue $hostDict "HTTPSMethod" "redirect" }}
 
 {{/* Get the SSL_POLICY defined by containers w/ the same vhost, falling back to empty string (use default) */}}
-{{ $ssl_policy := or (first (groupByKeys $containers "Env.SSL_POLICY")) "" }}
+{{ $ssl_policy := getValue $hostDict "SSLPolicy" "" }}
 
 {{/* Get the HSTS defined by containers w/ the same vhost, falling back to "max-age=31536000" */}}
-{{ $hsts := or (first (groupByKeys $containers "Env.HSTS")) "max-age=31536000" }}
-
-{{/* Get the VIRTUAL_ROOT By containers w/ use fastcgi root */}}
-{{ $vhost_root := or (first (groupByKeys $containers "Env.VIRTUAL_ROOT")) "/var/www/public" }}
+{{ $hsts := getValue $hostDict "HSTS" "max-age=31536000" }}
 
 
 {{/* Get the first cert name defined by containers w/ the same vhost */}}
-{{ $certName := (first (groupByKeys $containers "Env.CERT_NAME")) }}
+{{ $certName := getValue $hostDict "CertName" }}
 
 {{/* Get the best matching cert  by name for the vhost. */}}
 {{ $vhostCert := "" }}
@@ -95,9 +97,11 @@
 		include /etc/nginx/vhost.d/default;
 		{{ end }}
 
-		location / {
-			include(2.3.2.2.1-location-body.m4)
+		{{ range $location, $locationDict := getValue $hostDict "Locations" }}
+		location {{ $location }} {
+			include(2.3.5.1-location-body.m4)
 		}
+		{{ end }}
 	}
 
 {{ end }}{{/* if $is_https */}}
@@ -123,9 +127,11 @@
 		include /etc/nginx/vhost.d/default;
 		{{ end }}
 
-		location / {
-			include(2.3.2.2.1-location-body.m4)
+		{{ range $location, $locationDict := getValue $hostDict "Locations" }}
+		location {{ $location }} {
+			include(2.3.5.1-location-body.m4)
 		}
+		{{ end }}
 	}
 
 {{/* Block SSL access if no SSL is configured for the host and default certs exist */}}
@@ -145,3 +151,6 @@
 {{ end }}
 
 {{ end }}{{/* if or (not $is_https) (eq $https_method "noredirect") */}}
+
+
+{{ end }}{{/* range $host, $hostDict := $globalHosts */}}

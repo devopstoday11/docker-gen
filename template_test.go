@@ -749,17 +749,17 @@ func TestSetValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = setValue(m, "str", "test")
+	_, err = setValue(m, "str", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = setValue(m, "num", 123)
+	_, err = setValue(m, "num", 123)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = setValue(m, "arr", []string{"a", "b"})
+	_, err = setValue(m, "arr", []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -774,6 +774,52 @@ func TestSetValue(t *testing.T) {
 
 	if arr, ok := m["arr"].([]string); !ok || len(arr) != 2 {
 		t.Fatalf("setValue didn't set the []string value properly")
+	}
+
+	// multiple keys at once
+
+	_, err = setValue(m, "str", "newstr", "num", 321)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m["str"] != "newstr" {
+		t.Fatalf("setValue with multiple keys didn't overwite existing string value")
+	}
+
+	if m["num"] != 321 {
+		t.Fatalf("setValue with multiple keys didn't overwite existing int value")
+	}
+}
+
+func TestGetValue(t *testing.T) {
+	m, err := dict("a", 1, "b", "ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := getValue(m, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != 1 {
+		t.Fatal("getValue doesn't work for int value ")
+	}
+
+	val, err = getValue(m, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "ok" {
+		t.Fatal("getValue doesn't work for string value ")
+	}
+
+	val, err = getValue(m, "nonexist", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != 3 {
+		t.Fatal("getValue doesn't return default argument for non-existent key")
 	}
 }
 

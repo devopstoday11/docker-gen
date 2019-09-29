@@ -407,9 +407,10 @@ func (g *generator) getServices() (Services, error) {
 
 	for _, svc := range svcs {
 		s := &Service{
-			ID:     svc.ID,
-			Name:   svc.Spec.Name,
-			Labels: svc.Spec.Labels,
+			ID:       svc.ID,
+			Name:     svc.Spec.Name,
+			Labels:   svc.Spec.Labels,
+			Networks: make(map[string]ServiceNetwork),
 		}
 
 		for _, vip := range svc.Endpoint.VirtualIPs {
@@ -419,13 +420,12 @@ func (g *generator) getServices() (Services, error) {
 			}
 
 			cleanVIP := strings.Split(vip.Addr, "/")[0]
-			svcVIPNet := ServiceNetwork{
+			s.Networks[vip.NetworkID] = ServiceNetwork{
 				IP:     cleanVIP,
 				Name:   network.Name,
 				Scope:  network.Scope,
 				Driver: network.Driver,
 			}
-			s.Networks = append(s.Networks, svcVIPNet)
 		}
 
 		svcmap[svc.ID] = s

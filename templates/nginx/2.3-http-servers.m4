@@ -6,33 +6,53 @@ include(2.3.1-http-default-server.m4)
 {{ $CurrentContainer := where $ "ID" .Docker.CurrentContainerID | first }}
 {{/* Dictionary with upstream definitions.
 
-    upstreams = {
+    $globalUpstreams = {
         "safeUpstreamIdent": {
-            "<IPAddress[:optionalPort]>": "commented upstream definition, e.g.: server 10.0.27.7:5000;",
+            "[optionalIPAddress[:optionalPort]@]network": {
+                "Comment": "optional upstream comment",
+                "Definition": "server 10.0.27.7:5000;",
+            }
         }
     }
 */}}
-{{ $upstreams := dict }}
+{{ $globalUpstreams := dict }}
 
 {{/*
-    hosts = [{
-        hosts: ["host1.com", "host2.com"]
-        locations: {
-            "/": {
-                "upstream": "safeUpstreamIdent"
-            }
+    $globalHosts = {
+        "host1.com" {
+            "Locations": {
+                "/": {
+                    "Upstream": "safeUpstreamIdent",
+					"Redirect": { // optional redirect (takes precedence Upstream) //TODO: implement in gen
+						"Code": 301, // redirection HTTP code (301 default)
+						"Location": "http;//$host$request_uri?myparam=something" // redirection target (can use nginx vars)
+					},
+					"Proto": "http", // protocol to use for communication with the container service
+					"Root": "/var/www/public" // root for the location
+                }
+            },
+			"Default": true, // whether the host is default_host (default false)
+			"NetworkAccess": "external", // external (any) or internal (private subnets only)
+			"CertName": "", // https TLS cert file name (without .key/.cert suffix)
+			"HTTPSMethod": "redirect", // redirect (redir to https), noredirect, nohttp, nohttps
+			"SSLPolicy": "", // use non-default SSL policy (allowed TLS ciphers)
+			"HSTS": "max-age=31536000", // HSTS header
         }
-    }]
+    }
 */}}
-{{ $hosts := array }}
+{{ $globalHosts := dict }}
 
+include(2.3.2-http-services.m4)
+include(2.3.3-http-containers.m4)
+include(2.3.4-upstreams.m4)
+include(2.3.5-servers.m4)
 
-{{ range $host, $containers := groupByMulti $ "Env.VIRTUAL_HOST" "," }}
+{{/*
+	//!!!!! DEBUG !!!!!
+	// upstreams
+	{{json $globalUpstreams}}
 
-    {{ $host := trim $host }}
-    {{ $is_regexp := hasPrefix "~" $host }}
-    {{ $upstream_name := when $is_regexp (safeIdent $host) $host }}
-
-include(2.3.2-http-upstream.m4)
-
-{{ end }}
+	//hosts 
+	{{json $globalHosts}}
+	//!!!!! END DEBUG !!!!!
+*/}}

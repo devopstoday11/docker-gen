@@ -166,7 +166,7 @@ type Service struct {
 	ID       string
 	Name     string
 	Labels   map[string]string
-	Networks []ServiceNetwork
+	Networks map[string]ServiceNetwork
 }
 
 // DockerImage is a Docker image with repo and tag
