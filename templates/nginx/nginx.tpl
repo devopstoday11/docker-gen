@@ -1,5 +1,8 @@
 
 
+{{ $httpPort := or ($.Env.HTTP_PORT) "80" }}
+{{ $httpsPort := or ($.Env.HTTPS_PORT) "443" }}
+
 {{ define "ssl_policy" }}
 {{ if eq .ssl_policy "Mozilla-Modern" }}
 	ssl_protocols TLSv1.3;
@@ -172,9 +175,9 @@ http {
 
 	server {
 		server_name _; # This is just an invalid value which will never trigger on a real hostname.
-		listen 80;
+		listen {{ $httpPort }};
 		{{ if $enable_ipv6 }}
-		listen [::]:80;
+		listen [::]:{{ $httpPort }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 		return 503;
@@ -183,9 +186,9 @@ http {
 {{ if (and (exists "/etc/nginx/certs/default.crt") (exists "/etc/nginx/certs/default.key")) }}
 	server {
 		server_name _; # This is just an invalid value which will never trigger on a real hostname.
-		listen 443 ssl http2;
+		listen {{ $httpsPort }} ssl http2;
 		{{ if $enable_ipv6 }}
-		listen [::]:443 ssl http2;
+		listen [::]:{{ $httpsPort }} ssl http2;
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 		return 503;
@@ -254,18 +257,25 @@ http {
         {{ $upstreamDict := getValue $globalUpstreams $upstreamName dict }}
         {{ setValue $globalUpstreams $upstreamName $upstreamDict}}
 
+        {{ $canConnectToSvc := false }}
         {{ range $svcNetworkID, $svcNetwork := $service.Networks }}
             {{ range $knownNetwork := $CurrentContainer.Networks }}
                 {{ if (and (ne $svcNetwork.Name "ingress") (or (eq $knownNetwork.Name $svcNetwork.Name) (eq $knownNetwork.Name "host"))) }}
+                    {{ $canConnectToSvc = true }}
                     {{ $upstreamComment := printf "service %s via %s network" $service.Name $knownNetwork.Name }}
                     {{ $upstreamIP := $svcNetwork.IP }}
                     {{ $upstreamKey := printf "%s:%s@%s" $upstreamIP $upstreamPort $svcNetwork.Name }}
                     {{ $upstreamDef := printf "server %s:%s" $upstreamIP $upstreamPort }}
                     {{ setValue $upstreamDict $upstreamKey (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
-                {{ else }}
-                    {{/* TODO: cannot connect to the service */}}
                 {{ end }}
             {{ end }}
+        {{ end }}
+
+        {{/* propagate the connection problem info to the upstream definition */}}
+        {{ if not $canConnectToSvc }}
+            {{ $upstreamComment := printf "unable to connect to the service %s" $service.Name }}
+            {{ $upstreamDef := "server 127.0.0.1 down" }}
+            {{ setValue $upstreamDict $upstreamName (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
         {{ end }}
 
         {{/* locations */}}
@@ -292,7 +302,7 @@ http {
 		{{ $addrLen := len $container.Addresses }}
 
 		{{/* skip containers with Swarm service - service labels and virtual IP will be used for configuration of these */}}
-		{{ if or (not $container.Service) true }}{{/*TODO: temporarily true!! */}}
+		{{ if not $container.Service }}
 			{{ $containerSetDefinesServer = true }}
 
 			{{ range $knownNetwork := $CurrentContainer.Networks }}
@@ -567,9 +577,9 @@ http {
 {{ if eq $https_method "redirect" }}
 	server {
 		server_name {{ $host }};
-		listen 80 {{ $default_server }};
+		listen {{ $httpPort }} {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:80 {{ $default_server }};
+		listen [::]:{{ $httpPort }} {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 		return 301 https://$host$request_uri;
@@ -578,9 +588,9 @@ http {
 
 	server {
 		server_name {{ $host }};
-		listen 443 ssl http2 {{ $default_server }};
+		listen {{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:443 ssl http2 {{ $default_server }};
+		listen [::]:{{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 
@@ -657,9 +667,9 @@ http {
 {{ if or (not $is_https) (eq $https_method "noredirect") }}
 	server {
 		server_name {{ $host }};
-		listen 80 {{ $default_server }};
+		listen {{ $httpPort }} {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:80 {{ $default_server }};
+		listen [::]:{{ $httpPort }} {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 
@@ -711,9 +721,9 @@ http {
 {{ if (and (not $is_https) (exists "/etc/nginx/certs/default.crt") (exists "/etc/nginx/certs/default.key")) }}
 	server {
 		server_name {{ $host }};
-		listen 443 ssl http2 {{ $default_server }};
+		listen {{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:443 ssl http2 {{ $default_server }};
+		listen [::]:{{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 		return 500;

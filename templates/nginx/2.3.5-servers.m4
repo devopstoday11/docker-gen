@@ -46,9 +46,9 @@
 {{ if eq $https_method "redirect" }}
 	server {
 		server_name {{ $host }};
-		listen 80 {{ $default_server }};
+		listen {{ $httpPort }} {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:80 {{ $default_server }};
+		listen [::]:{{ $httpPort }} {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 		return 301 https://$host$request_uri;
@@ -57,9 +57,9 @@
 
 	server {
 		server_name {{ $host }};
-		listen 443 ssl http2 {{ $default_server }};
+		listen {{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:443 ssl http2 {{ $default_server }};
+		listen [::]:{{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 
@@ -110,9 +110,9 @@
 {{ if or (not $is_https) (eq $https_method "noredirect") }}
 	server {
 		server_name {{ $host }};
-		listen 80 {{ $default_server }};
+		listen {{ $httpPort }} {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:80 {{ $default_server }};
+		listen [::]:{{ $httpPort }} {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 
@@ -138,9 +138,9 @@
 {{ if (and (not $is_https) (exists "/etc/nginx/certs/default.crt") (exists "/etc/nginx/certs/default.key")) }}
 	server {
 		server_name {{ $host }};
-		listen 443 ssl http2 {{ $default_server }};
+		listen {{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ if $enable_ipv6 }}
-		listen [::]:443 ssl http2 {{ $default_server }};
+		listen [::]:{{ $httpsPort }} ssl http2 {{ $default_server }};
 		{{ end }}
 		access_log /var/log/nginx/access.log vhost;
 		return 500;

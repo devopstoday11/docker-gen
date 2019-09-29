@@ -62,7 +62,7 @@ Options:`)
 	println(`
 Arguments:
   template - path to a template to generate
-  dest - path to a write the template.  If not specfied, STDOUT is used`)
+  dest - path to write the template to.  If not specfied, STDOUT is used`)
 
 	println(`
 Environment Variables:

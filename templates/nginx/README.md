@@ -10,6 +10,8 @@
 
 #### Core Opts
 
+- HTTP_PORT (default 80): HTTP listening port
+- HTTPS_PORT (default 442): HTTPS listening port
 - WORKER_PROCESSES (default "auto"): Number of Nginx worker threads
 - MAX_WORKER_CONNECTIONS (default "16384"): Maximum number of simultaneous all connections that can be opened by a worker process (incl. client and proxy connections). 
 - WORKER_SHUTDOWN_TIMEOUT (default "10s"): Configures a timeout for a graceful shutdown of worker processes. When the time expires, nginx will try to close all the connections currently open to facilitate shutdown.

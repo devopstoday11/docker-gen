@@ -14,18 +14,25 @@
         {{ $upstreamDict := getValue $globalUpstreams $upstreamName dict }}
         {{ setValue $globalUpstreams $upstreamName $upstreamDict}}
 
+        {{ $canConnectToSvc := false }}
         {{ range $svcNetworkID, $svcNetwork := $service.Networks }}
             {{ range $knownNetwork := $CurrentContainer.Networks }}
                 {{ if (and (ne $svcNetwork.Name "ingress") (or (eq $knownNetwork.Name $svcNetwork.Name) (eq $knownNetwork.Name "host"))) }}
+                    {{ $canConnectToSvc = true }}
                     {{ $upstreamComment := printf "service %s via %s network" $service.Name $knownNetwork.Name }}
                     {{ $upstreamIP := $svcNetwork.IP }}
                     {{ $upstreamKey := printf "%s:%s@%s" $upstreamIP $upstreamPort $svcNetwork.Name }}
                     {{ $upstreamDef := printf "server %s:%s" $upstreamIP $upstreamPort }}
                     {{ setValue $upstreamDict $upstreamKey (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
-                {{ else }}
-                    {{/* TODO: cannot connect to the service */}}
                 {{ end }}
             {{ end }}
+        {{ end }}
+
+        {{/* propagate the connection problem info to the upstream definition */}}
+        {{ if not $canConnectToSvc }}
+            {{ $upstreamComment := printf "unable to connect to the service %s" $service.Name }}
+            {{ $upstreamDef := "server 127.0.0.1 down" }}
+            {{ setValue $upstreamDict $upstreamName (dict "Comment" $upstreamComment "Definition" $upstreamDef) }}
         {{ end }}
 
         {{/* locations */}}
